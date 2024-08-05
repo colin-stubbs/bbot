@@ -40,17 +40,23 @@ caa_extensions_kvp_regex = re.compile(_caa_extensions_kvp_regex)
 
 class dnscaa(BaseModule):
     watched_events = ["DNS_NAME"]
-    produced_events = ["DNS_NAME", "EMAIL_ADDRESS", "URL_UNVERIFIED"]
+    produced_events = ["DNS_NAME", "EMAIL_ADDRESS", "URL_UNVERIFIED", "RAW_DNS_RECORD"]
     flags = ["subdomain-enum", "email-enum", "passive", "safe"]
-    meta = {"description": "Check for CAA records", "author": "@colin-stubbs", "created_date": "2024-05-26"}
+    meta = {
+        "description": "Check for CAA records",
+        "author": "@colin-stubbs",
+        "created_date": "2024-05-26",
+    }
     options = {
+        "emit_raw_records": False,
         "in_scope_only": True,
         "dns_names": True,
         "emails": True,
         "urls": True,
     }
     options_desc = {
-        "in_scope_only": "Only check in-scope domains",
+        "emit_raw_records": "Emit RAW_DNS_RECORD events",
+        "in_scope_only": "Only emit events related to in-scope domains",
         "dns_names": "emit DNS_NAME events",
         "emails": "emit EMAIL_ADDRESS events",
         "urls": "emit URL_UNVERIFIED events",
@@ -59,6 +65,7 @@ class dnscaa(BaseModule):
     scope_distance_modifier = 2
 
     async def setup(self):
+        self.emit_raw_records = self.config.get("emit_raw_records", False)
         self.in_scope_only = self.config.get("in_scope_only", True)
         self._dns_names = self.config.get("dns_names", True)
         self._emails = self.config.get("emails", True)
@@ -76,17 +83,31 @@ class dnscaa(BaseModule):
         return True
 
     async def handle_event(self, event):
-        tags = ["caa-record"]
+        rdtype = "CAA"
+        tags = [f"{rdtype.lower()}-record"]
 
-        r = await self.helpers.resolve_raw(event.host, type="caa")
+        r = await self.helpers.resolve_raw(event.host, type=rdtype)
 
         if r:
             raw_results, errors = r
 
             for answer in raw_results:
+                if self.emit_raw_records:
+                    await self.emit_event(
+                        {
+                            "host": event.host,
+                            "type": rdtype,
+                            "answer": answer.to_text(),
+                        },
+                        "RAW_DNS_RECORD",
+                        parent=event,
+                        tags=tags,
+                        context=f"{rdtype} lookup on {{event.parent.host}} produced {{event.type}}",
+                    )
+
                 s = answer.to_text().strip().replace('" "', "")
 
-                # validate CAA record vi regex so that we can determine what to do with it.
+                # validate CAA record via regex so that we can determine what to do with it.
                 caa_match = caa_regex.search(s)
 
                 if caa_match and caa_match.group("flags") and caa_match.group("property") and caa_match.group("text"):
