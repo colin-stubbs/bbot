@@ -86,8 +86,6 @@ class dnsdmarc(BaseModule):
     async def validateDMARC(self, event, host, answer, tags):
         dmarc = False
         valid = True
-        reasons = []
-
         vulnerable = False
         vulnerabilities = []
 
@@ -97,7 +95,6 @@ class dnsdmarc(BaseModule):
             "p": "",  # none/quarantine/reject - No default, explicit definition required
             "sp": "",  # No default, inherits value from p if sp not explicitly provided
             "pct": "100",  # 100%
-            # TODO: actually do checks on the below?
             "adkim": "r",  # r|s == relaxed|strict
             "aspf": "r",  # r|s == relaxed|strict
             "fo": "0",  # 0/1/d/s - forensic reporting options, e.g. "1:d:s", refer to RFC spec
@@ -119,8 +116,8 @@ class dnsdmarc(BaseModule):
                 policy[key] = match.group("v")
 
                 if not key in policy.keys():
+                    # KVP that is not defined by RFC-7489 found
                     valid = False
-                    reasons.append("RFC undefined KVP key '" + key + "' found")
 
                 if key == "rua" or key == "ruf":
                     for csul_match in csul.finditer(policy[key]):
@@ -142,20 +139,27 @@ class dnsdmarc(BaseModule):
 
             if policy["v"] != "DMARC1":
                 valid = False
-                reasons.append(
-                    "policy version is not RFC compliant, 'v' key has value '"
-                    + policy["v"]
-                    + "' instead of required 'DMARC1'"
-                )
-
                 vulnerable = True
-                vulnerabilities.append(
-                    "DMARC policy is not RFC compliant and may not be utilised by all third parties"
-                )
+                vulnerabilities.append("DMARC policy version is invalid (v='" + policy["v"] + "')")
 
-            if policy["pct"] != "100":
+            try:
+                pct = int(policy["pct"])
+                if pct < 0 or pct > 100:
+                    valid = False
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC policy specifies invalid enforcement percentage (pct=" + policy["pct"] + ")"
+                    )
+                elif pct < 100:
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC policy specifies partial enforcement percentage (pct=" + policy["pct"] + ")"
+                    )
+
+            except ValueError:
+                valid = False
                 vulnerable = True
-                vulnerabilities.append("DMARC policy specifies partial enforcement (pct=" + policy["pct"] + ")")
+                vulnerabilities.append("Percentage value is not a valid integer (pct=" + policy["pct"] + ")")
 
             if policy["p"] == "none" or policy["p"] == "quarantine" or policy["p"] == "reject":
                 if policy["p"] == "none" and policy["rua"] == "" and policy["ruf"] == "":
@@ -164,8 +168,9 @@ class dnsdmarc(BaseModule):
                         "DMARC policy action is report-only but no reporting destinations were provided"
                     )
             else:
+                valid = False
                 vulnerable = True
-                vulnerabilities.append("DMARC policy action invalid or not provided (p='" + policy["p"] + "')")
+                vulnerabilities.append("DMARC policy action invalid (p='" + policy["p"] + "')")
 
             if policy["sp"] == "":
                 # sp inherits value from p if not explicitly provided
@@ -177,21 +182,22 @@ class dnsdmarc(BaseModule):
                         "DMARC subdomain policy action is report-only but no reporting destinations were provided"
                     )
             else:
+                valid = False
                 vulnerable = True
                 vulnerabilities.append("DMARC subdomain policy action invalid (sp='" + policy["sp"] + "')")
 
-            # TODO: vulnerability event if adkim is not s ?
             if policy["adkim"] != "r" and policy["adkim"] != "s":
+                valid = False
                 vulnerable = True
                 vulnerabilities.append(
-                    "DMARC policy DKIM Identifier Alignment mode is invalid (adkim=" + policy["adkim"] + ")"
+                    "DMARC policy DKIM Identifier Alignment mode is invalid (adkim='" + policy["adkim"] + "')"
                 )
 
-            # TODO: vulnerability event if aspf is not s ?
             if policy["aspf"] != "r" and policy["aspf"] != "s":
+                valid = False
                 vulnerable = True
                 vulnerabilities.append(
-                    "DMARC policy SPF Identifier Alignment mode is invalid (adkim=" + policy["adkim"] + ")"
+                    "DMARC policy SPF Identifier Alignment mode is invalid (adkim='" + policy["adkim"] + "')"
                 )
 
             if policy["ruf"] != "":
@@ -205,8 +211,6 @@ class dnsdmarc(BaseModule):
                 fo_valid = True
 
                 if policy["fo"] == "":
-                    valid = False
-                    reasons.append("fo option is an empty string")
                     fo_valid = False
                 else:
                     for c in policy["fo"].split(":"):
@@ -215,20 +219,22 @@ class dnsdmarc(BaseModule):
 
                         if not c in fo:
                             fo_valid = False
-                            valid = False
-                            reasons.append(f"fo option contains unsupported option '{c}'")
 
                 if fo_valid == False:
                     vulnerable = True
-                    vulnerabilities.append("DMARC Forensic Option set is invalid (fo=" + policy["fo"] + ")")
+                    vulnerabilities.append("DMARC Forensic Option set is invalid (fo='" + policy["fo"] + "')")
+
+                # determine overall validity in combination with fo validity
+                valid = valid and fo_valid
 
                 # TODO: emit vulnerability event if the default of 0 is the only option set?
                 # e.g. minimal reporting which can provide the opportunity to test spoofing without triggering reports ?
 
             if policy["rf"] != "afrf":
                 # NOTE: only afrf currently supported, "xml" or "json" etc would likely result in an invalid/unenforced policy.
+                valid = False
                 vulnerable = True
-                vulnerabilities.append("DMARC Reporting Format is invalid (rf=" + policy["rf"] + ")")
+                vulnerabilities.append("DMARC Reporting Format is invalid (rf='" + policy["rf"] + "')")
 
             try:
                 ri = int(policy["ri"])
@@ -256,32 +262,25 @@ class dnsdmarc(BaseModule):
 
             except ValueError:
                 valid = False
-                reasons.append("ri value is not an integer")
                 vulnerable = True
                 vulnerabilities.append("Reporting Interval is not an integer (ri=" + policy["ri"] + ")")
 
         elif answer.lower().startswith("v=dmarc"):
             dmarc = True
             valid = False
-            reasons.append("invalid format record")
-            reasons.append("regex match failed")
-
             vulnerable = True
             vulnerabilities.append(
                 "DMARC policy is not parsable and may not be utilised by third parties, domain may be spoofable to some destinations"
             )
         else:
-            # Non-DMARC records do not constitute a vulnerability as they *should* be discard,
+            # Non-DMARC records do not constitute a vulnerability as they *should* be discarded,
             # From RFC-7489: "Records that do not start with a "v=" tag that identifies the current version of DMARC are discarded."
             dmarc = False
             valid = False
-            reasons.append("invalid format record")
-            reasons.append("non-DMARC related response, possible wildcard TXT record")
 
         return {
             "dmarc": dmarc,
             "valid": valid,
-            "reasons": reasons,
             "vulnerable": vulnerable,
             "vulnerabilities": vulnerabilities,
         }
@@ -330,6 +329,7 @@ class dnsdmarc(BaseModule):
                     dmarc_vulnerable_count = dmarc_vulnerable_count + 1
 
                 if self.emit_vulnerabilities == True and result["vulnerable"] == True:
+                    # TODO: adjust severity based on what was actually found.
                     severity = "HIGH"
                     description = ", ".join(result["vulnerabilities"])
                     self.debug(f"VULN: {hostname} = '{description}'")
@@ -346,11 +346,12 @@ class dnsdmarc(BaseModule):
                     )
 
             if dmarc_count == 0:
+                # No TXT answers, or no DMARC policies found in TXT answers
                 await self.emit_event(
                     {
                         "host": hostname,
                         "severity": "HIGH",
-                        "description": f"DMARC policy absent for this domain",
+                        "description": "DMARC policy absent for this domain",
                     },
                     "VULNERABILITY",
                     parent=event,
@@ -359,6 +360,7 @@ class dnsdmarc(BaseModule):
                 )
 
             if dmarc_count > 1 and dmarc_vulnerable_count > 0 and self.emit_vulnerabilities == True:
+                # Within multiple TXT answers we found multiple DMARC policies
                 await self.emit_event(
                     {
                         "host": hostname,
