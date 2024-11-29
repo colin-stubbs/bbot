@@ -127,23 +127,27 @@ class dnsdmarc(BaseModule):
             if policy["v"] != "DMARC1":
                 valid = False
                 reasons.append(
-                    "policy version is not RFC compliant, 'v' key equals '" + policy["v"] + "' instead of 'DMARC1'"
+                    "policy version is not RFC compliant, 'v' key has value '"
+                    + policy["v"]
+                    + "' instead of required 'DMARC1'"
                 )
 
                 vulnerable = True
-                vulnerabilities.append("policy is not RFC compliant and may not be utilised by all third parties")
+                vulnerabilities.append(
+                    "DMARC policy is not RFC compliant and may not be utilised by all third parties"
+                )
 
             if policy["p"] == "none":
                 vulnerable = True
-                vulnerabilities.append("policy is report-only so no quarantine or rejection will occur")
+                vulnerabilities.append("DMARC policy is report-only")
             elif policy["p"] == "quarantine" and policy["pct"] != "100":
                 vulnerable = True
                 vulnerabilities.append(
-                    "policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
+                    "DMARC policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
                 )
             elif not policy["p"] == "quarantine" and not policy["p"] == "reject":
                 vulnerable = True
-                vulnerabilities.append("policy action invalid or not provided (p='" + policy["p"] + "')")
+                vulnerabilities.append("DMARC policy action invalid or not provided (p='" + policy["p"] + "')")
 
             if policy["sp"] == "":
                 # sp inherits value from p if not explicitly provided
@@ -151,19 +155,98 @@ class dnsdmarc(BaseModule):
 
             if policy["sp"] == "none":
                 vulnerable = True
-                vulnerabilities.append("subdomain policy is report-only so no quarantine or rejection will occur")
+                vulnerabilities.append("DMARC subdomain policy is report-only")
             elif policy["sp"] == "quarantine" and policy["pct"] != "100":
                 vulnerable = True
                 vulnerabilities.append(
-                    "subdomain policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
+                    "DMARC subdomain policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
                 )
             elif not policy["sp"] == "quarantine" and not policy["sp"] == "reject":
                 vulnerable = True
-                vulnerabilities.append("subdomain policy action invalid (sp='" + policy["sp"] + "')")
+                vulnerabilities.append("DMARC subdomain policy action invalid (sp='" + policy["sp"] + "')")
 
             if policy["pct"] != "100":
                 vulnerable = True
-                vulnerabilities.append("policy does not apply to all email (pct=" + policy["pct"] + ")")
+                vulnerabilities.append("DMARC policy does not apply to all email (pct=" + policy["pct"] + ")")
+
+            # TODO: vulnerability event if adkim is not s ?
+            if policy["adkim"] != "r" and policy["adkim"] != "s":
+                vulnerable = True
+                vulnerabilities.append(
+                    "DMARC policy DKIM Identifier Alignment mode is invalid (adkim=" + policy["adkim"] + ")"
+                )
+
+            # TODO: vulnerability event if aspf is not s ?
+            if policy["aspf"] != "r" and policy["aspf"] != "s":
+                vulnerable = True
+                vulnerabilities.append(
+                    "DMARC policy SPF Identifier Alignment mode is invalid (adkim=" + policy["adkim"] + ")"
+                )
+
+            if policy["ruf"] != "":
+                # RFC-7489: fo tag is only utilised if ruf contains some kind of destination
+                fo = {
+                    "0": True,  # Generate a DMARC failure report if all underlying authentication mechanisms fail to produce an aligned "pass" result.
+                    "1": False,  # Generate a DMARC failure report if any underlying authentication mechanism produced something other than an aligned "pass" result.
+                    "d": False,  # Generate a DKIM failure report if the message had a signature that failed evaluation, regardless of its alignment.
+                    "s": False,  # Generate an SPF failure report if the message failed SPF evaluation, regardless of its alignment.
+                }
+                fo_valid = True
+
+                if policy["fo"] == "":
+                    valid = False
+                    reasons.append("fo option is an empty string")
+                    fo_valid = False
+                else:
+                    for c in policy["fo"].split(":"):
+                        # checks that each option is in the supported set of 0, 1, d or s
+                        fo[c] = True
+
+                        if not c in fo:
+                            fo_valid = False
+                            valid = False
+                            reasons.append(f"fo option contains unsupported option '{c}'")
+
+                if fo_valid == False:
+                    vulnerable = True
+                    vulnerabilities.append("DMARC Forensic Option set is invalid (fo=" + policy["fo"] + ")")
+
+                # TODO: emit vulnerability event if the default of 0 is the only option set?
+                # e.g. minimal reporting which can provide the opportunity to test spoofing without triggering reports ?
+
+            if policy["rf"] != "afrf":
+                vulnerable = True
+                vulnerabilities.append("DMARC Reporting Format is invalid (rf=" + policy["rf"] + ")")
+
+            try:
+                ri = int(policy["ri"])
+                # NOTE: Reporting Intervals less than 1 hour (3600 seconds) or greater than 24 hours
+                # (86400 seconds) may not be supported by mail servers and behaviour may be inconsistent,
+                # e.g. aggregate reports may not be sent at all.
+                #
+                # "ri: Indicates a request to Receivers to generate aggregate reports separated by no
+                # more than the requested number of seconds.  DMARC implementations MUST be able to
+                # provide daily reports and SHOULD be able to provide hourly reports when requested.
+                # However, anything other than a daily report is understood to be accommodated on a
+                # best-effort basis."
+
+                # Should these actually be considered as a vulnerability, or simply a misconfiguration/possible problem?
+                if ri < 3600:
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC Reporting Interval is less than 3600 seconds (1 hour) (ri=" + policy["ri"] + ")"
+                    )
+                elif ri > 86400:
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC Reporting Interval is greater than 86400 seconds (24 hours) (ri=" + policy["ri"] + ")"
+                    )
+
+            except ValueError:
+                valid = False
+                reasons.append("ri value is not an integer")
+                vulnerable = True
+                vulnerabilities.append("Reporting Interval is not an integer (ri=" + policy["ri"] + ")")
 
         elif answer.lower().startswith("v=dmarc"):
             dmarc = True
@@ -263,21 +346,18 @@ class dnsdmarc(BaseModule):
                     context=f"TXT requests against {hostname} returned {answer_count} answers, of which {dmarc_count} were DMARC policies. The target domain can be spoofed.",
                 )
 
-            if dmarc_count > 1:
-                # if there's multiple DMARC records but none have any vulnerabilities this is weird but not really worth mentioning...
-
-                if dmarc_vulnerable_count > 0 and self.emit_vulnerabilities == True:
-                    await self.emit_event(
-                        {
-                            "host": hostname,
-                            "severity": "HIGH",
-                            "description": "multiple DMARC policies have been published with at least one vulnerable policy present",
-                        },
-                        "VULNERABILITY",
-                        parent=event,
-                        tags=tags.append(f"vulnerability"),
-                        context=f"TXT requests against {hostname} returned {answer_count} answers, of which {dmarc_count} were DMARC policies, {dmarc_valid_count} appear to be valid and {dmarc_vulnerable_count} is vulnerable. Policy enforcement by MTA's may be inconsitent. Potential for domain spoofing exists.",
-                    )
+            if dmarc_count > 1 and dmarc_vulnerable_count > 0 and self.emit_vulnerabilities == True:
+                await self.emit_event(
+                    {
+                        "host": hostname,
+                        "severity": "HIGH",
+                        "description": "multiple DMARC policies have been published with at least one vulnerable policy present",
+                    },
+                    "VULNERABILITY",
+                    parent=event,
+                    tags=tags.append(f"vulnerability"),
+                    context=f"TXT requests against {hostname} returned {answer_count} answers, of which {dmarc_count} were DMARC policies, {dmarc_valid_count} appear to be valid and {dmarc_vulnerable_count} is vulnerable. Policy enforcement by MTA's may be inconsitent. Potential for domain spoofing exists.",
+                )
 
 
 # EOF

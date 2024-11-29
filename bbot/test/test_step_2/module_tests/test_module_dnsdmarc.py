@@ -19,6 +19,9 @@ raw_dmarc_txt_rfc_invalid = '"v=DMARC2; p=reject; sp=quarantine; pct=100; rua=ma
 
 raw_txt_wildcard_spf = "v=spf1 -all"
 
+raw_dmarc_everything_good = '"v=DMARC1;p=reject;sp=quarantine;pct=100;adkim=s;aspf=s; fo=1:d:s; rf=afrf; ri=86400; rua=mailto:dmarc.rua@reports.blacklanternsecurity.notreal; ruf=mailto:d@vali.email;"'
+raw_dmarc_everything_ffed = '"v=DMARC1;p=invalid;sp=garbage;pct=101;adkim=a;aspf=b;unexpected=thing;fo=c:d:f;rf=XML;ri=9999999999;rua=mailto:garbage@example.com, https://example.net; ruf=pidgeon:homing@box.com, https://microsoft.com;"'
+
 
 class TestDNSDMARC(ModuleTestBase):
     targets = [
@@ -127,8 +130,7 @@ class TestDNSDMARC(ModuleTestBase):
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.a.notreal"
-            and e.data["description"]
-            == "policy is report-only so no quarantine or rejection will occur, subdomain policy is report-only so no quarantine or rejection will occur"
+            and e.data["description"] == "DMARC policy is report-only, DMARC subdomain policy is report-only"
             for e in events
         )
 
@@ -143,19 +145,19 @@ class TestDNSDMARC(ModuleTestBase):
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.d.notreal"
             and e.data["description"]
-            == "policy action invalid or not provided (p='reject pct=100'), subdomain policy action invalid (sp='reject pct=100')"
+            == "DMARC policy action invalid or not provided (p='reject pct=100'), DMARC subdomain policy action invalid (sp='reject pct=100')"
             for e in events
         )
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.e.notreal"
-            and e.data["description"] == "policy does not apply to all email (pct=50)"
+            and e.data["description"] == "DMARC policy does not apply to all email (pct=50)"
             for e in events
         )
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.f.notreal"
-            and e.data["description"] == "subdomain policy is report-only so no quarantine or rejection will occur"
+            and e.data["description"] == "DMARC subdomain policy is report-only"
             for e in events
         )
 
