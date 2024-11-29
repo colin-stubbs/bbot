@@ -112,6 +112,9 @@ class dnsdmarc(BaseModule):
                 if key == "rua" or key == "ruf":
                     for csul_match in csul.finditer(policy[key]):
                         if csul_match.group("uri") and csul_match.group("uri") != "":
+                            # TODO: validate format of each comma separated URI in RUA/RUF text
+                            # e.g. only mailto: based URI's are supported, HTTP/HTTPS etc indicates misconfiguration/vulnerability due to lack of report delivery
+                            # e.g. missing mailto: prefix for emails indicates misconfiguraiton/vulnerability due to lack of report delivery
                             for email_match in email_regex.finditer(csul_match.group("uri")):
                                 start, end = email_match.span()
                                 email = csul_match.group("uri")[start:end]
@@ -136,6 +139,10 @@ class dnsdmarc(BaseModule):
                 vulnerabilities.append(
                     "DMARC policy is not RFC compliant and may not be utilised by all third parties"
                 )
+
+            if ( policy["p"] == "none" or policy["p"] == "quarantine" or policy["p"] == "reject" ) and policy["rua"] == "" and policy["ruf"] == "":
+                vulnerable = True
+                vulnerabilities.append("DMARC policy action is valid but reporting destinations were not provided")
 
             if policy["p"] == "none":
                 vulnerable = True
@@ -215,6 +222,7 @@ class dnsdmarc(BaseModule):
                 # e.g. minimal reporting which can provide the opportunity to test spoofing without triggering reports ?
 
             if policy["rf"] != "afrf":
+                # NOTE: only afrf currently supported, "xml" or "json" etc would likely result in an invalid/unenforced policy.
                 vulnerable = True
                 vulnerabilities.append("DMARC Reporting Format is invalid (rf=" + policy["rf"] + ")")
 
