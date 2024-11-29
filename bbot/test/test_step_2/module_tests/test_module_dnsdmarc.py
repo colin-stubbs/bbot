@@ -160,7 +160,7 @@ class TestDNSDMARC(ModuleTestBase):
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.e.notreal"
-            and e.data["description"] == "DMARC policy specifies partial enforcement percentage (pct=50)"
+            and e.data["description"] == "DMARC policy specifies partial percentage (pct=50)"
             for e in events
         )
         assert not any(
@@ -190,7 +190,7 @@ class TestDNSDMARC(ModuleTestBase):
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.k.notreal"
             and e.data["description"]
-            == "DMARC policy specifies invalid enforcement percentage (pct=101), DMARC policy action invalid (p='invalid'), DMARC subdomain policy action invalid (sp='garbage'), DMARC policy DKIM Identifier Alignment mode is invalid (adkim='a'), DMARC policy SPF Identifier Alignment mode is invalid (adkim='a'), DMARC Reporting Format is invalid (rf='XML'), DMARC Reporting Interval is greater than 86400 seconds (24 hours) (ri=9999999999)"
+            == "DMARC rua key value contains invalid reporting URI 'https://example.net', DMARC ruf key value contains invalid reporting URI 'pidgeon:homing@box.com', DMARC ruf key value contains invalid reporting URI 'https://microsoft.com', DMARC policy specifies invalid percentage (pct=101), DMARC policy action invalid (p='invalid'), DMARC subdomain policy action invalid (sp='garbage'), DMARC policy DKIM Identifier Alignment mode is invalid (adkim='a'), DMARC policy SPF Identifier Alignment mode is invalid (adkim='a'), DMARC Reporting Format is invalid (rf='XML'), DMARC Reporting Interval is greater than 86400 seconds (24 hours) (ri=9999999999)"
             for e in events
         )
 

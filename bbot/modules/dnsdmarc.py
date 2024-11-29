@@ -122,9 +122,18 @@ class dnsdmarc(BaseModule):
                 if key == "rua" or key == "ruf":
                     for csul_match in csul.finditer(policy[key]):
                         if csul_match.group("uri") and csul_match.group("uri") != "":
-                            # TODO: validate format of each comma separated URI in RUA/RUF text
-                            # e.g. only mailto: based URI's are supported, HTTP/HTTPS etc indicates misconfiguration/vulnerability due to lack of report delivery
-                            # e.g. missing mailto: prefix for emails indicates misconfiguraiton/vulnerability due to lack of report delivery
+                            # Validate format of each comma separated URI in RUA/RUF text
+                            # e.g. only mailto: based URI's are supported, HTTP/HTTPS are invalid and may mean zero reports are delivered
+                            # e.g. missing mailto: prefix for emails indicates misconfiguraiton/vulnerability due to potential for lack of report delivery
+                            if not csul_match.group("uri").lower().startswith("mailto:"):
+                                valid = False
+                                vulnerable = True
+                                vulnerabilities.append(
+                                    f"DMARC {key} key value contains invalid reporting URI '"
+                                    + csul_match.group("uri")
+                                    + "'"
+                                )
+
                             for email_match in email_regex.finditer(csul_match.group("uri")):
                                 start, end = email_match.span()
                                 email = csul_match.group("uri")[start:end]
@@ -147,14 +156,13 @@ class dnsdmarc(BaseModule):
                 if pct < 0 or pct > 100:
                     valid = False
                     vulnerable = True
-                    vulnerabilities.append(
-                        "DMARC policy specifies invalid enforcement percentage (pct=" + policy["pct"] + ")"
-                    )
+                    vulnerabilities.append("DMARC policy specifies invalid percentage (pct=" + policy["pct"] + ")")
+                elif pct == 0:
+                    vulnerable = True
+                    vulnerabilities.append("DMARC policy specifies zero as percentage (pct=" + policy["pct"] + ")")
                 elif pct < 100:
                     vulnerable = True
-                    vulnerabilities.append(
-                        "DMARC policy specifies partial enforcement percentage (pct=" + policy["pct"] + ")"
-                    )
+                    vulnerabilities.append("DMARC policy specifies partial percentage (pct=" + policy["pct"] + ")")
 
             except ValueError:
                 valid = False
