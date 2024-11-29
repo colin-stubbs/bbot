@@ -11,6 +11,19 @@
 # TODO: extract %{UNIQUE_ID}% from hosted services as ORG_STUB ?
 #   e.g. %{UNIQUE_ID}%@dmarc.hosted.service.provider is usually a tenant specific ID.
 #   e.g. dmarc@%{UNIQUE_ID}%.hosted.service.provider is usually a tenant specific ID.
+#
+# Vulnerability situations,
+#   1. Missing DMARC record entirely, e.g. domain will probably be spoofable in some way
+#   2. Totally non-RFC compliant DMARC record, e.g. "v=dmarc;" or other fatal formatting failure, where the DMARC policy may be ignored by mail servers that would otherwise enforce it
+#   3. p=none meaning report-only, e.g. domain will probably be spoofable in some way, with no RUA/RUF destinations provided
+#   4. sp=none meaning report-only, e.g. subdomains will probably be spoofable in some way, with no RUA/RUF destinations provided
+#   5. pct!=100, e.g. policy action will only apply to some email, supporting some level of spoofability with incomplete reporting
+#   6. Partially non-RFC compliant DMARC record, where the entire DMARC policy may or may not be ignored, but expected behaviours are likely to occur such as RUA/RUF report delivery will not occur.
+#       i. Invalid DKIM alignment mode
+#      ii. Invalid SPF alignment mode
+#     iii. Invalid afrf format, e.g. xml or json when it should be afrf
+#    iiii. Abnormal ri value, e.g. not equal to 1 hour or 1 day. RFC specification does not explain what should happen, this may lead to unexpected behaviour by some mail servers.
+#   iiiii. Unsupported fo values, e.g. "fo=x:y:z;",
 
 from bbot.modules.base import BaseModule
 from bbot.core.helpers.dns.helpers import service_record
@@ -140,41 +153,32 @@ class dnsdmarc(BaseModule):
                     "DMARC policy is not RFC compliant and may not be utilised by all third parties"
                 )
 
-            if ( policy["p"] == "none" or policy["p"] == "quarantine" or policy["p"] == "reject" ) and policy["rua"] == "" and policy["ruf"] == "":
+            if policy["pct"] != "100":
                 vulnerable = True
-                vulnerabilities.append("DMARC policy action is valid but reporting destinations were not provided")
+                vulnerabilities.append("DMARC policy specifies partial enforcement (pct=" + policy["pct"] + ")")
 
-            if policy["p"] == "none":
-                vulnerable = True
-                vulnerabilities.append("DMARC policy is report-only")
-            elif policy["p"] == "quarantine" and policy["pct"] != "100":
-                vulnerable = True
-                vulnerabilities.append(
-                    "DMARC policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
-                )
-            elif not policy["p"] == "quarantine" and not policy["p"] == "reject":
+            if policy["p"] == "none" or policy["p"] == "quarantine" or policy["p"] == "reject":
+                if policy["p"] == "none" and policy["rua"] == "" and policy["ruf"] == "":
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC policy action is report-only but no reporting destinations were provided"
+                    )
+            else:
                 vulnerable = True
                 vulnerabilities.append("DMARC policy action invalid or not provided (p='" + policy["p"] + "')")
 
             if policy["sp"] == "":
                 # sp inherits value from p if not explicitly provided
                 policy["sp"] = policy["p"]
-
-            if policy["sp"] == "none":
-                vulnerable = True
-                vulnerabilities.append("DMARC subdomain policy is report-only")
-            elif policy["sp"] == "quarantine" and policy["pct"] != "100":
-                vulnerable = True
-                vulnerabilities.append(
-                    "DMARC subdomain policy is quarantine-only with partial enforcement (pct=" + policy["pct"] + ")"
-                )
-            elif not policy["sp"] == "quarantine" and not policy["sp"] == "reject":
+            elif policy["sp"] == "none" or policy["p"] == "quarantine" or policy["p"] == "reject":
+                if policy["sp"] == "none" and policy["rua"] == "" and policy["ruf"] == "":
+                    vulnerable = True
+                    vulnerabilities.append(
+                        "DMARC subdomain policy action is report-only but no reporting destinations were provided"
+                    )
+            else:
                 vulnerable = True
                 vulnerabilities.append("DMARC subdomain policy action invalid (sp='" + policy["sp"] + "')")
-
-            if policy["pct"] != "100":
-                vulnerable = True
-                vulnerabilities.append("DMARC policy does not apply to all email (pct=" + policy["pct"] + ")")
 
             # TODO: vulnerability event if adkim is not s ?
             if policy["adkim"] != "r" and policy["adkim"] != "s":

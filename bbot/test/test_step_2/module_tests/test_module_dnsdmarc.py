@@ -35,6 +35,8 @@ class TestDNSDMARC(ModuleTestBase):
         "g.notreal",
         "h.notreal",
         "i.notreal",
+        "j.notreal",
+        "k.notreal",
     ]
     modules_overrides = ["dnsdmarc", "speculate"]
     config_overrides = {
@@ -105,6 +107,18 @@ class TestDNSDMARC(ModuleTestBase):
                 "i.notreal": {
                     "A": ["127.0.1.22"],
                 },
+                "j.notreal": {
+                    "A": ["127.0.1.33"],
+                },
+                "_dmarc.j.notreal": {
+                    "TXT": [raw_dmarc_everything_good],
+                },
+                "k.notreal": {
+                    "A": ["127.0.1.44"],
+                },
+                "_dmarc.k.notreal": {
+                    "TXT": [raw_dmarc_everything_ffed],
+                },
             }
         )
 
@@ -127,39 +141,31 @@ class TestDNSDMARC(ModuleTestBase):
             e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.blacklanternsecurity.notreal" for e in events
         ), "_dmarc.blacklanternsecurity.notreal incorrectly reported as vulnerable"
 
-        assert any(
-            e.type == "VULNERABILITY"
-            and e.data["host"] == "_dmarc.a.notreal"
-            and e.data["description"] == "DMARC policy is report-only, DMARC subdomain policy is report-only"
-            for e in events
-        )
-
+        assert not any(
+            e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.a.notreal" for e in events
+        ), "Incorrectly marked _dmarc.a.notreal as vulnerable"
         assert not any(
             e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.b.notreal" for e in events
         ), "Incorrectly marked _dmarc.b.notreal as vulnerable"
         assert not any(
             e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.c.notreal" for e in events
-        ), "Incorrectly marked _dmarc.b.notreal as vulnerable"
+        ), "Incorrectly marked _dmarc.c.notreal as vulnerable"
 
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.d.notreal"
-            and e.data["description"]
-            == "DMARC policy action invalid or not provided (p='reject pct=100'), DMARC subdomain policy action invalid (sp='reject pct=100')"
+            and e.data["description"] == "DMARC policy action invalid or not provided (p='reject pct=100')"
             for e in events
         )
         assert any(
             e.type == "VULNERABILITY"
             and e.data["host"] == "_dmarc.e.notreal"
-            and e.data["description"] == "DMARC policy does not apply to all email (pct=50)"
+            and e.data["description"] == "DMARC policy specifies partial enforcement (pct=50)"
             for e in events
         )
-        assert any(
-            e.type == "VULNERABILITY"
-            and e.data["host"] == "_dmarc.f.notreal"
-            and e.data["description"] == "DMARC subdomain policy is report-only"
-            for e in events
-        )
+        assert not any(
+            e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.f.notreal" for e in events
+        ), "Incorrectly marked _dmarc.f.notreal as vulnerable"
 
         assert not any(e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.g.notreal" for e in events)
 
@@ -177,6 +183,10 @@ class TestDNSDMARC(ModuleTestBase):
             and e.data["description"] == "DMARC policy absent for this domain"
             for e in events
         )
+
+        assert not any(e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.j.notreal" for e in events)
+
+        assert any(e.type == "VULNERABILITY" and e.data["host"] == "_dmarc.k.notreal" for e in events)
 
 
 class TestDNSDMARCRecursiveRecursion(TestDNSDMARC):
